@@ -57,14 +57,18 @@ jobs:
             Library-${{ env.UNITY_VERSION }}-
 
       - name: Unity batchmode import
-        uses: game-ci/unity-builder@v4
-        with:
-          targetPlatform: StandaloneLinux64
-          unityVersion: ${{ env.UNITY_VERSION }}
-          customImage: unityci/editor:ubuntu-${{ env.UNITY_VERSION }}-base-3
-          versioning: None
-          allowDirtyBuild: true
-          customParameters: -nographics
+        run: |
+          set -o pipefail
+          set +e
+          docker run --rm -v "$PWD":/project -w /project \
+            unityci/editor:ubuntu-${{ env.UNITY_VERSION }}-base-3 \
+            /bin/bash -c 'if command -v unity-editor >/dev/null; then U=unity-editor; elif [ -x /opt/unity/Editor/Unity ]; then U=/opt/unity/Editor/Unity; else echo "no unity binary"; ls /opt; exit 9; fi; exec $U -batchmode -nographics -quit -manualLicenseFile /project/ci/UnityLicense.ulf -projectPath /project -logFile /dev/stdout' 2>&1 | tee unity-import.log
+          status=$?
+          set -e
+          echo "unity exit: $status"
+          grep -q "error CS" unity-import.log && { echo "::error::C# 编译错误"; grep "error CS" unity-import.log | head -60; exit 1; } || true
+          test $status -eq 0 || { echo "::error::Unity 退出码 $status"; tail -60 unity-import.log; exit 1; }
+          echo "编译通过：日志中无 error CS"
 
       - name: Upload Unity logs
         if: always()
