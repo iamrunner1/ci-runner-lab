@@ -41,6 +41,12 @@ jobs:
             echo '__LICENSE_EOF__'
           } >> "$GITHUB_ENV"
           echo "license bytes: $(wc -c < ci/UnityLicense.ulf)"
+          if [ -f ci/unity_credentials.txt ]; then
+            cat ci/unity_credentials.txt >> "$GITHUB_ENV"
+            echo "credentials: $(cut -d= -f1 ci/unity_credentials.txt | tr '\n' ' ')"
+          else
+            echo "::error::ci/unity_credentials.txt missing"; exit 1
+          fi
 
       - name: Clean Library
         run: |
