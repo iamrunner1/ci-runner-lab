@@ -29,6 +29,16 @@ jobs:
 
       - name: Show source head
         run: git log -1 --format='src HEAD %h %s'
+      - name: Prepare Unity license (from private repo file)
+        run: |
+          set -e
+          if [ ! -f ci/UnityLicense.ulf ]; then echo "::error::ci/UnityLicense.ulf missing"; exit 1; fi
+          {
+            echo 'UNITY_LICENSE<<__LICENSE_EOF__'
+            cat ci/UnityLicense.ulf
+            echo '__LICENSE_EOF__'
+          } >> "$GITHUB_ENV"
+          echo "license bytes: $(wc -c < ci/UnityLicense.ulf)"
 
       - name: Cache Library
         uses: actions/cache@v4
@@ -41,11 +51,6 @@ jobs:
 
       - name: Unity batchmode import
         uses: game-ci/unity-builder@v4
-        env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
         with:
           targetPlatform: StandaloneLinux64
           unityVersion: ${{ env.UNITY_VERSION }}
