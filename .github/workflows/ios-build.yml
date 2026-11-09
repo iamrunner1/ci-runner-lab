@@ -37,6 +37,7 @@ jobs:
           {
             echo 'UNITY_LICENSE<<__LICENSE_EOF__'
             cat ci/UnityLicense.ulf
+            echo
             echo '__LICENSE_EOF__'
           } >> "$GITHUB_ENV"
           echo "license bytes: $(wc -c < ci/UnityLicense.ulf)"
