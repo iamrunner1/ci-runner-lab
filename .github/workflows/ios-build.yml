@@ -1,0 +1,124 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ios-build.yml"
+
+env:
+  UNITY_VERSION: 6000.3.10f1
+  SRC_REPO: iamrunner1/imouto-ios
+
+jobs:
+  build:
+    name: Unity iOS build (unsigned ipa)
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout private source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SRC_REPO }}
+          token: ${{ secrets.SRC_TOKEN }}
+          fetch-depth: 0
+
+      - name: Show source head
+        run: |
+          git log -1 --format='src HEAD %h %s'
+          ls -la | head -n 20
+
+      - name: Clean Library
+        run: |
+          rm -rf Library Temp
+          echo "Library/Temp cleared"
+
+      - name: Normalize Resources folder case
+        run: |
+          set -e
+          python3 ci/rename_resources_case.py
+
+      - name: Build Unity project (iOS)
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          targetPlatform: iOS
+          unityVersion: ${{ env.UNITY_VERSION }}
+          versioning: None
+          allowDirtyBuild: true
+          customParameters: -nographics
+          buildMethod: CIBuild.BuildIOS
+
+      - name: Locate Xcode project
+        id: locate
+        run: |
+          set -e
+          echo "--- build dir ---"
+          ls -la build 2>/dev/null || true
+          XCPROJ=$(find build -maxdepth 4 -name "Unity-iPhone.xcodeproj" | head -n 1)
+          if [ -z "$XCPROJ" ]; then
+            echo "::error::Unity-iPhone.xcodeproj not found - Unity build stage failed, check previous step logs"
+            exit 1
+          fi
+          echo "xcodeproj=$XCPROJ" >> "$GITHUB_OUTPUT"
+          echo "found: $XCPROJ"
+
+      - name: Archive unsigned ipa
+        run: |
+          set -e
+          DIR="${{ steps.locate.outputs.xcodeproj }}"
+          cd "$(dirname "$DIR")"
+          xcodebuild -project Unity-iPhone.xcodeproj \
+            -scheme Unity-iPhone \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath ./DerivedData \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build | tee xcodebuild.log | tail -n 40
+          APP=$(find ./DerivedData -name "*.app" -maxdepth 5 | head -n 1)
+          if [ -z "$APP" ]; then echo "::error::xcodebuild produced no .app"; exit 1; fi
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry "a-short-day.ipa" Payload
+          ls -lh a-short-day.ipa
+
+      # 产物不回传公开库：直接发布到私有库 Release，避免 ipa 在公开仓库可被任何人下载
+      - name: Publish ipa to private repo release
+        if: success()
+        env:
+          TOKEN: ${{ secrets.SRC_TOKEN }}
+        run: |
+          set -e
+          TAG="ci-${{ github.run_number }}"
+          IPA=$(find build -name "a-short-day.ipa" | head -n 1)
+          echo "ipa=$IPA size=$(stat -f%z "$IPA")"
+          API="https://api.github.com/repos/${{ env.SRC_REPO }}"
+          REL=$(curl -sS -X POST "$API/releases" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -d "{\"tag_name\":\"$TAG\",\"name\":\"CI build $TAG\",\"body\":\"built on public shim run ${{ github.run_id }}\",\"draft\":false}")
+          UPLOAD=$(printf '%s' "$REL" | python3 -c "import sys,json;print(json.load(sys.stdin)['upload_url'].split('{')[0])")
+          echo "upload_url=$UPLOAD"
+          curl -sS --fail -X POST "$UPLOAD?name=a-short-day.ipa&label=a-short-day.ipa" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@$IPA" | python3 -c "import sys,json;d=json.load(sys.stdin);print('asset',d.get('name'),d.get('size'))"
+
+      - name: Upload logs (text only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-logs
+          path: |
+            Logs/
+            build/**/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
