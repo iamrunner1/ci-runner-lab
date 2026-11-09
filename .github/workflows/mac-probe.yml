@@ -6,7 +6,7 @@ on:
 jobs:
   probe:
     name: macOS runner probe
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 10
     steps:
       - name: Hello from macOS
